@@ -273,15 +273,34 @@ func AllIssuesHandlers(cred *RefreshableCred, roleName string, opts *Credentials
 	return putTokenHandler, getRoleNameHandler, getCredentialsHandler
 }
 
-func setupHandlers(roleName string, putTokenHandler http.HandlerFunc, getRoleNameHandler http.HandlerFunc, getCredentialsHandler http.HandlerFunc) http.Handler {
+func setupHandlers(roleName string, region string, putTokenHandler http.HandlerFunc, getRoleNameHandler http.HandlerFunc, getCredentialsHandler http.HandlerFunc) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc(TOKEN_RESOURCE_PATH, putTokenHandler)
 	mux.HandleFunc(TOKEN_RESOURCE_PATH_WITH_TRAILING_SLASH, putTokenHandler)
 	mux.HandleFunc(SECURITY_CREDENTIALS_RESOURCE_PATH, getRoleNameHandler)
 	mux.HandleFunc(SECURITY_CREDENTIALS_RESOURCE_PATH_WITH_TRAILING_SLASH, getRoleNameHandler)
-	mux.HandleFunc(SECURITY_CREDENTIALS_RESOURCE_PATH_WITH_TRAILING_SLASH + roleName, getCredentialsHandler)
-	mux.HandleFunc(SECURITY_CREDENTIALS_RESOURCE_PATH_WITH_TRAILING_SLASH + roleName + "/", getCredentialsHandler)
+	mux.HandleFunc(SECURITY_CREDENTIALS_RESOURCE_PATH_WITH_TRAILING_SLASH+roleName, getCredentialsHandler)
+	mux.HandleFunc(SECURITY_CREDENTIALS_RESOURCE_PATH_WITH_TRAILING_SLASH+roleName+"/", getCredentialsHandler)
+
+	// Instance placement metadata — enables AWS SDK region auto-detection
+	// so that S3 clients don't need to call GetBucketLocation as a fallback.
+	if region != "" {
+		metadataHandler := func(value string) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "GET" {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				if err := CheckValidToken(w, r); err != nil {
+					return
+				}
+				io.WriteString(w, value)
+			}
+		}
+		mux.HandleFunc("/latest/meta-data/placement/region", metadataHandler(region))
+		mux.HandleFunc("/latest/meta-data/placement/availability-zone", metadataHandler(region+"a"))
+	}
 
 	return mux
 }
@@ -316,7 +335,7 @@ func Serve(port int, credentialsOptions CredentialsOpts) {
 	roleName := roleResourceParts[len(roleResourceParts)-1] // Find role name without path
 
 	putTokenHandler, getRoleNameHandler, getCredentialsHandler := AllIssuesHandlers(&endpoint.TmpCred, roleName, &credentialsOptions, signer, signatureAlgorithm)
-	handler := setupHandlers(roleName, putTokenHandler, getRoleNameHandler, getCredentialsHandler)
+	handler := setupHandlers(roleName, credentialsOptions.Region, putTokenHandler, getRoleNameHandler, getCredentialsHandler)
 
 	endpoint.Server = &http.Server{Handler: handler}
 
