@@ -13,6 +13,4 @@ RUN apt-get update && \
 
 COPY --from=builder /src/build/bin/aws_signing_helper /usr/local/bin/
 
-USER 65532:65532
-
 ENTRYPOINT ["/usr/local/bin/aws_signing_helper"]
